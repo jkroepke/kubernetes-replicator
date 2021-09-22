@@ -30,6 +30,7 @@ func init() {
 	flag.StringVar(&f.LogLevel, "log-level", "info", "Log level (trace, debug, info, warn, error)")
 	flag.StringVar(&f.LogFormat, "log-format", "plain", "Log format (plain, json)")
 	flag.BoolVar(&f.AllowAll, "allow-all", false, "allow replication of all secrets (CAUTION: only use when you know what you're doing)")
+	flag.BoolVar(&f.StripOwnerReference, "strip-owner-reference", false, "strip metadata.ownerReference while copy resources")
 	flag.Parse()
 
 	switch strings.ToUpper(strings.TrimSpace(f.LogLevel)) {
@@ -80,10 +81,10 @@ func main() {
 
 	client = kubernetes.NewForConfigOrDie(config)
 
-	secretRepl := secret.NewReplicator(client, f.ResyncPeriod, f.AllowAll)
-	configMapRepl := configmap.NewReplicator(client, f.ResyncPeriod, f.AllowAll)
-	roleRepl := role.NewReplicator(client, f.ResyncPeriod, f.AllowAll)
-	roleBindingRepl := rolebinding.NewReplicator(client, f.ResyncPeriod, f.AllowAll)
+	secretRepl := secret.NewReplicator(client, f.ResyncPeriod, f.AllowAll, f.StripOwnerReference)
+	configMapRepl := configmap.NewReplicator(client, f.ResyncPeriod, f.AllowAll, f.StripOwnerReference)
+	roleRepl := role.NewReplicator(client, f.ResyncPeriod, f.AllowAll, f.StripOwnerReference)
+	roleBindingRepl := rolebinding.NewReplicator(client, f.ResyncPeriod, f.AllowAll, f.StripOwnerReference)
 
 	go secretRepl.Run()
 

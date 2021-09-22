@@ -80,7 +80,7 @@ func TestSecretReplicator(t *testing.T) {
 	prefix := namespacePrefix()
 	client := kubernetes.NewForConfigOrDie(config)
 
-	repl := NewReplicator(client, 60*time.Second, false)
+	repl := NewReplicator(client, 60*time.Second, false, false)
 	go repl.Run()
 
 	time.Sleep(200 * time.Millisecond)
@@ -1060,6 +1060,126 @@ func TestSecretReplicator(t *testing.T) {
 
 	})
 
+}
+
+func TestSecretReplicatorWithStripOwnerReference(t *testing.T) {
+
+	log.SetLevel(log.TraceLevel)
+	log.SetFormatter(&PlainFormatter{})
+
+	kubeconfig := os.Getenv("KUBECONFIG")
+	//is KUBECONFIG is not specified try to use the local KUBECONFIG or the in cluster config
+	if len(kubeconfig) == 0 {
+		if home := homeDir(); home != "" && home != "/root" {
+			kubeconfig = filepath.Join(home, ".kube", "config")
+		}
+	}
+
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+	require.NoError(t, err)
+
+	prefix := namespacePrefix()
+	client := kubernetes.NewForConfigOrDie(config)
+
+	repl := NewReplicator(client, 60*time.Second, false, true)
+	go repl.Run()
+
+	time.Sleep(200 * time.Millisecond)
+
+	ns := corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: prefix + "test-1",
+		},
+	}
+	_, err = client.CoreV1().Namespaces().Create(context.TODO(), &ns, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	ns2 := corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: prefix + "test2-2",
+			Labels: map[string]string{
+				"foo": "bar",
+			}},
+	}
+	_, err = client.CoreV1().Namespaces().Create(context.TODO(), &ns2, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	defer func() {
+		_ = client.CoreV1().Namespaces().Delete(context.TODO(), ns.Name, metav1.DeleteOptions{})
+		_ = client.CoreV1().Namespaces().Delete(context.TODO(), ns2.Name, metav1.DeleteOptions{})
+	}()
+
+	secrets := client.CoreV1().Secrets(prefix + "test")
+
+	const MaxWaitTime = 1000 * time.Millisecond
+	t.Run("replicates from existing secret", func(t *testing.T) {
+		source := corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "source",
+				Namespace: ns.Name,
+				Annotations: map[string]string{
+					common.ReplicationAllowed:           "true",
+					common.ReplicationAllowedNamespaces: ns.Name,
+				},
+				OwnerReferences: []metav1.OwnerReference{
+					{
+						APIVersion: "v1",
+						Kind:       "Deployment",
+						Name:       "test",
+						UID:        "1234",
+					},
+				},
+			},
+			Type: corev1.SecretTypeOpaque,
+			Data: map[string][]byte{
+				"foo": []byte("Hello World"),
+			},
+		}
+
+		target := corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "target",
+				Namespace: ns.Name,
+				Annotations: map[string]string{
+					common.ReplicateFromAnnotation: common.MustGetKey(&source),
+				},
+			},
+			Type: corev1.SecretTypeOpaque,
+		}
+
+		wg, stop := waitForSecrets(client, 3, EventHandlerFuncs{
+			AddFunc: func(wg *sync.WaitGroup, obj interface{}) {
+				secret := obj.(*corev1.Secret)
+				if secret.Namespace == source.Namespace && secret.Name == source.Name {
+					log.Debugf("AddFunc %+v", obj)
+					wg.Done()
+				} else if secret.Namespace == target.Namespace && secret.Name == target.Name {
+					log.Debugf("AddFunc %+v", obj)
+					wg.Done()
+				}
+			},
+			UpdateFunc: func(wg *sync.WaitGroup, oldObj interface{}, newObj interface{}) {
+				secret := oldObj.(*corev1.Secret)
+				if secret.Namespace == target.Namespace && secret.Name == target.Name {
+					log.Debugf("UpdateFunc %+v -> %+v", oldObj, newObj)
+					wg.Done()
+				}
+			},
+		})
+
+		_, err := secrets.Create(context.TODO(), &source, metav1.CreateOptions{})
+		require.NoError(t, err)
+
+		_, err = secrets.Create(context.TODO(), &target, metav1.CreateOptions{})
+		require.NoError(t, err)
+
+		waitWithTimeout(wg, MaxWaitTime)
+		close(stop)
+
+		updTarget, err := secrets.Get(context.TODO(), target.Name, metav1.GetOptions{})
+		require.NoError(t, err)
+		require.Equal(t, []byte("Hello World"), updTarget.Data["foo"])
+	})
 }
 
 func waitForNamespaces(client *kubernetes.Clientset, count int, eventHandlers EventHandlerFuncs) (wg *sync.WaitGroup, stop chan struct{}) {

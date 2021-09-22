@@ -25,14 +25,15 @@ type Replicator struct {
 }
 
 // NewReplicator creates a new config map replicator
-func NewReplicator(client kubernetes.Interface, resyncPeriod time.Duration, allowAll bool) common.Replicator {
+func NewReplicator(client kubernetes.Interface, resyncPeriod time.Duration, allowAll bool, stripOwnerReference bool) common.Replicator {
 	repl := Replicator{
 		GenericReplicator: common.NewGenericReplicator(common.ReplicatorConfig{
-			Kind:         "ConfigMap",
-			ObjType:      &v1.ConfigMap{},
-			AllowAll:     allowAll,
-			ResyncPeriod: resyncPeriod,
-			Client:       client,
+			Kind:                "ConfigMap",
+			ObjType:             &v1.ConfigMap{},
+			AllowAll:            allowAll,
+			StripOwnerReference: stripOwnerReference,
+			ResyncPeriod:        resyncPeriod,
+			Client:              client,
 			ListFunc: func(lo metav1.ListOptions) (runtime.Object, error) {
 				return client.CoreV1().ConfigMaps("").List(context.TODO(), lo)
 			},
@@ -71,6 +72,10 @@ func (r *Replicator) ReplicateDataFrom(sourceObj interface{}, targetObj interfac
 	}
 
 	targetCopy := target.DeepCopy()
+
+	if r.StripOwnerReference {
+		targetCopy.OwnerReferences = nil
+	}
 
 	if targetCopy.Data == nil {
 		targetCopy.Data = make(map[string]string)

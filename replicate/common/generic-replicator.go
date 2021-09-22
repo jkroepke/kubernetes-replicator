@@ -22,13 +22,14 @@ import (
 )
 
 type ReplicatorConfig struct {
-	Kind         string
-	Client       kubernetes.Interface
-	ResyncPeriod time.Duration
-	AllowAll     bool
-	ListFunc     cache.ListFunc
-	WatchFunc    cache.WatchFunc
-	ObjType      runtime.Object
+	Kind                string
+	Client              kubernetes.Interface
+	ResyncPeriod        time.Duration
+	AllowAll            bool
+	StripOwnerReference bool
+	ListFunc            cache.ListFunc
+	WatchFunc           cache.WatchFunc
+	ObjType             runtime.Object
 }
 
 type UpdateFuncs struct {
